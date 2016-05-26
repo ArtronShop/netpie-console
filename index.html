@@ -1,0 +1,258 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+<meta charset="utf-8">
+<title>NETPIE Console</title>
+<meta name=viewport content="width=device-width,initial-scale=1" />
+<script src="js/jquery-1.11.3.min.js"></script>
+<script src="js/microgear.js"></script>
+<script>
+microgear = null;
+connected = false;
+
+$(document).ready(function(e) {
+    $("#connect-btn").click(function(e) {
+		if (connected) {
+			for (var key in microgear.__proto__._events) {
+				delete microgear.__proto__._events[key];
+			}
+			delete microgear;
+			$("#status").removeClass().addClass("disconnect").text("หยุดเชื่อมต่อ");
+			$("#DataLog tbody").html('');
+			$("#MointerData fieldset").attr("disabled", true);
+			$("#Connect2Netpie input").attr("disabled", false);
+			$("#connect-btn").text("เชื่อมต่อ");
+			connected = false;
+			return ;
+		}
+		
+		var appid = $("#appid").val();
+		var appkey = $("#appkey").val();
+		var appsecret = $("#appsecret").val();
+		
+		if (typeof appid === "undefined" || appid === "") {
+			$("#appid").focus();
+			return;
+		}
+		if (typeof appkey === "undefined" || appkey === "") {
+			$("#appkey").focus();
+			return;
+		}
+		if (typeof appsecret === "undefined" || appsecret === "") {
+			$("#appsecret").focus();
+			return;
+		}
+		
+        microgear = Microgear.create({
+			key: appkey,
+			secret: appsecret,
+			alias : "console"
+		});
+		
+		microgear.on('message', function(topic,msg) {
+			var now = new Date();
+			var html = "";
+			html += "<tr>";
+            html += "  <td class=\"center\">";
+			html += (now.getHours() < 10 ? "0" : "") + now.getHours();
+			html += ":";
+			html += (now.getMinutes() < 10 ? "0" : "") + now.getMinutes();
+			html += ":";
+			html += (now.getSeconds() < 10 ? "0" : "") + now.getSeconds();
+			html += "</td>";
+            html += "  <td>" + topic + "</td>";
+            html += "  <td>" + msg + "</td>";
+            html += "</tr>";
+			$("#DataLog tbody").append(html);
+		});
+		
+		microgear.on('connected', function() {
+			microgear.setAlias("#");
+			$("#status").removeClass().addClass("connected").text("เชื่อมต่อ");
+			$("#MointerData fieldset").attr("disabled", false);
+			$("#Connect2Netpie input").attr("disabled", true);
+			connected = true;
+			$("#connect-btn").text("หยุดเชื่อมต่อ");
+		});
+
+		microgear.connect(appid);
+		$("#status").removeClass().addClass("connect").text("กำลังเชื่อมต่อ");
+    });
+	
+	$("#MointerData").submit(function(e) {
+        e.preventDefault();
+		
+		var topic = $("#topic").val();
+		var msg = $("#msg").val();
+		microgear.chat(topic, msg);
+		$("#msg").val('');
+		
+		if ($("#auto-scroll").is(":checked")) {
+			$("html, body").animate({ scrollTop: $(document).height()}, 500);
+		}
+    });
+	
+	$(document).keyup(function(e) {
+        if (e.ctrlKey && e.keyCode == 88) {
+			$("#auto-scroll")[0].checked = !$("#auto-scroll")[0].checked;
+		}
+    });
+});
+</script>
+<style>
+* {
+	box-sizing: border-box;
+}
+body {
+	font-family: Arial, Helvetica, sans-serif;
+}
+h1 {
+	font-size: 42px;
+	margin: 15px 0;
+	color: #333;
+}
+.box-content {
+	max-width: 1024px;
+	padding: 20px;
+	margin: auto;
+}
+.powerby {
+	font-size: 18px;
+	color: #666;
+	margin-bottom: 20px;
+}
+fieldset {
+	border: #F5F5F5 1px solid;
+}
+form#Connect2Netpie {
+	margin-bottom: 15px;
+}
+form#Connect2Netpie label {
+	width: 28%;
+	padding-right: 20px;
+	display: inline-block;
+	text-align: center;
+	margin-bottom: 10px;
+}
+form#Connect2Netpie label > input {
+	width: 100%;
+}
+input {
+	padding: 6px 10px;
+	border-radius: 3px;
+	border: #CCC 1px solid;
+	outline: none;
+	font-size: 14px;
+}
+form#Connect2Netpie label.btn {
+	width: 14%;
+}
+form#Connect2Netpie label.btn > button {
+	width: 100%;
+}
+button {
+	padding: 6px 10px;
+	border-radius: 3px;
+	border: #00BDB4 1px solid;
+	outline: none;
+	font-size: 14px;
+	background: #00D2C8;
+	color: #FFF;
+}
+button:hover {
+	background: #00A9A1;
+}
+button:disabled {
+	opacity: 0.5;
+}
+#status {
+	padding: 3px 6px;
+	background: #999;
+	color: #FFF;
+	border-radius: 3px;
+	font-size: 14px;
+}
+#status.connect {
+	background: #F90;
+}
+#status.connected {
+	background: #00C700;
+}
+#status.disconnect {
+	background: #F00;
+}
+#status.null {
+	background: #CCC;
+}
+.box-log {
+	margin-bottom: 15px;
+}
+table {
+	width: 100%;
+	border: #E4E4E4 1px solid;
+	border-spacing: 0;
+	border-bottom: none;
+}
+table > thead > tr > th {
+	border-bottom: 2px solid #E4E4E4;
+}
+table > tbody > tr > td {
+	border-bottom: 1px solid #E4E4E4;
+}
+table td, table th {
+	padding: 6px;
+}
+.center {
+	text-align: center;
+}
+#MointerData {
+	margin-bottom: 60px;
+}
+</style>
+</head>
+
+<body>
+<article class="box-content">
+  <h1>NETPIE Console</h1>
+  <div class="powerby">By IOXhop : www.ioxhop.com</div>
+  <form id="Connect2Netpie">
+    <fieldset>
+      <legend>ข้อมูลการเชื่อมต่อ</legend>
+      <label><input id="appid" type="text" placeholder="APPID"></label>
+      <label><input id="appkey" type="text" placeholder="APPKEY"></label>
+      <label><input id="appsecret" type="text" placeholder="APPSECRET"></label>
+      <label class="btn"><button id="connect-btn" type="button">เชื่อมต่อ</button></label>
+      <div>สถานะ <span id="status" class="null">ว่าง</span></div>
+    </fieldset>
+  </form>
+  <form id="MointerData">
+    <fieldset disabled>
+      <legend>ทราฟฟิ่</legend>
+      <div class="box-log">
+        <table id="DataLog">
+          <thead>
+            <tr>
+              <th>เวลา</th>
+              <th>Topic</th>
+              <th>ข้อความ</th>
+            </tr>
+          </thead>
+          <tbody>
+            
+          </tbody>
+        </table>
+      </div>
+      <div class="box-send">
+        <input id="topic" type="text" placeholder="Topic">
+        &nbsp;&nbsp;
+        <input id="msg" type="text" placeholder="ข้อความ">
+        &nbsp;&nbsp;
+        <button type="submit">ส่ง</button>
+        &nbsp;&nbsp;
+        <label><input type="checkbox" id="auto-scroll"> เลื่อนลงอัตโนมัติ (Ctrl + X)</label>
+      </div>
+    </fieldset>
+  </form>
+</article>
+</body>
+</html>
