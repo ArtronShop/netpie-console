@@ -21,6 +21,7 @@
  * Microgear-HTML5 communicates over TLS by default
  * If you want to disable TLS, set USETLS to false
  */
+const VERSION = '1.1.8';
 const GEARAPIADDRESS = 'ga.netpie.io';
 const GEARAPIPORT = '8080';
 const GEARAPISECUREPORT = '8081';
@@ -36,47 +37,218 @@ const MGREV = 'WJS1b';
 /**
  * Constants
  */
-const TOKENCACHEFILENAME = 'microgear.cache';
 const MINTOKDELAYTIME = 100;
 const MAXTOKDELAYTIME = 30000;
 const DEBUGMODE = false;
 const MONLOOPINTERVAL = 1000;
 const RETRYCONNECTIONINTERVAL = 5000;
+const MESSAGEBUFFERSIZE = 20;
 
 /**
  * Variables
  */
 var toktime = MINTOKDELAYTIME;
-var gearauthurl;
+var GEARAUTH = GEARAPIADDRESS;
 
-var _microgear = function(gearkey,gearsecret,gearalias) {
-	this.securemode = USETLS;
-	this.gearkey = gearkey;
-	this.gearsecret = gearsecret;
-    this.gearalias = gearalias?gearalias.substring(0,16):null;
-	this.client = null;
-	this.subscriptions = [];
-	this.requesttoken = {};
-	this.accesstoken = {};
-}
-var Microgear = {
-	create : function(param) {
-	    var gkey = param.key?param.key:param.gearkey?param.gearkey:"";
-    	var gsecret = param.secret?param.secret:param.gearsecret?param.gearsecret:"";
-	    var galias = param.alias?param.alias:param.gearalias?param.gearalias:"";
+/*
+Store.js
+Copyright (c) 2010-2016 Marcus Westin
+Source: https://github.com/marcuswestin/store.js
+*/
+var storejs = (function() {
+	var store = {},
+		win = (typeof window != 'undefined' ? window : global),
+		doc = win.document,
+		localStorageName = 'localStorage',
+		scriptTag = 'script',
+		storage
 
-		if (!param) return;
-		var scope = param.scope;
-
-		if (gkey && gsecret) {
-			var mg = new _microgear(gkey,gsecret,galias);
-			mg.scope = param.scope;
-			self = mg;
-			return mg;
+	store.disabled = false
+	store.version = '1.3.20'
+	store.set = function(key, value) {}
+	store.get = function(key, defaultVal) {}
+	store.has = function(key) { return store.get(key) !== undefined }
+	store.remove = function(key) {}
+	store.clear = function() {}
+	store.transact = function(key, defaultVal, transactionFn) {
+		if (transactionFn == null) {
+			transactionFn = defaultVal
+			defaultVal = null
 		}
-		else {	
-			return null;
+		if (defaultVal == null) {
+			defaultVal = {}
 		}
+		var val = store.get(key, defaultVal)
+		transactionFn(val)
+		store.set(key, val)
+	}
+	store.getAll = function() {}
+	store.forEach = function() {}
+
+	store.serialize = function(value) {
+		return JSON.stringify(value)
+	}
+	store.deserialize = function(value) {
+		if (typeof value != 'string') { return undefined }
+		try { return JSON.parse(value) }
+		catch(e) { return value || undefined }
+	}
+
+	// Functions to encapsulate questionable FireFox 3.6.13 behavior
+	// when about.config::dom.storage.enabled === false
+	// See https://github.com/marcuswestin/store.js/issues#issue/13
+	function isLocalStorageNameSupported() {
+		try { return (localStorageName in win && win[localStorageName]) }
+		catch(err) { return false }
+	}
+
+	if (isLocalStorageNameSupported()) {
+		storage = win[localStorageName]
+		store.set = function(key, val) {
+			if (val === undefined) { return store.remove(key) }
+			storage.setItem(key, store.serialize(val))
+			return val
+		}
+		store.get = function(key, defaultVal) {
+			var val = store.deserialize(storage.getItem(key))
+			return (val === undefined ? defaultVal : val)
+		}
+		store.remove = function(key) { storage.removeItem(key) }
+		store.clear = function() { storage.clear() }
+		store.getAll = function() {
+			var ret = {}
+			store.forEach(function(key, val) {
+				ret[key] = val
+			})
+			return ret
+		}
+		store.forEach = function(callback) {
+			for (var i=0; i<storage.length; i++) {
+				var key = storage.key(i)
+				callback(key, store.get(key))
+			}
+		}
+	} else if (doc && doc.documentElement.addBehavior) {
+		var storageOwner,
+			storageContainer
+		// Since #userData storage applies only to specific paths, we need to
+		// somehow link our data to a specific path.  We choose /favicon.ico
+		// as a pretty safe option, since all browsers already make a request to
+		// this URL anyway and being a 404 will not hurt us here.  We wrap an
+		// iframe pointing to the favicon in an ActiveXObject(htmlfile) object
+		// (see: http://msdn.microsoft.com/en-us/library/aa752574(v=VS.85).aspx)
+		// since the iframe access rules appear to allow direct access and
+		// manipulation of the document element, even for a 404 page.  This
+		// document can be used instead of the current document (which would
+		// have been limited to the current path) to perform #userData storage.
+		try {
+			storageContainer = new ActiveXObject('htmlfile')
+			storageContainer.open()
+			storageContainer.write('<'+scriptTag+'>document.w=window</'+scriptTag+'><iframe src="/favicon.ico"></iframe>')
+			storageContainer.close()
+			storageOwner = storageContainer.w.frames[0].document
+			storage = storageOwner.createElement('div')
+		} catch(e) {
+			// somehow ActiveXObject instantiation failed (perhaps some special
+			// security settings or otherwse), fall back to per-path storage
+			storage = doc.createElement('div')
+			storageOwner = doc.body
+		}
+		var withIEStorage = function(storeFunction) {
+			return function() {
+				var args = Array.prototype.slice.call(arguments, 0)
+				args.unshift(storage)
+				// See http://msdn.microsoft.com/en-us/library/ms531081(v=VS.85).aspx
+				// and http://msdn.microsoft.com/en-us/library/ms531424(v=VS.85).aspx
+				storageOwner.appendChild(storage)
+				storage.addBehavior('#default#userData')
+				storage.load(localStorageName)
+				var result = storeFunction.apply(store, args)
+				storageOwner.removeChild(storage)
+				return result
+			}
+		}
+
+		// In IE7, keys cannot start with a digit or contain certain chars.
+		// See https://github.com/marcuswestin/store.js/issues/40
+		// See https://github.com/marcuswestin/store.js/issues/83
+		var forbiddenCharsRegex = new RegExp("[!\"#$%&'()*+,/\\\\:;<=>?@[\\]^`{|}~]", "g")
+		var ieKeyFix = function(key) {
+			return key.replace(/^d/, '___$&').replace(forbiddenCharsRegex, '___')
+		}
+		store.set = withIEStorage(function(storage, key, val) {
+			key = ieKeyFix(key)
+			if (val === undefined) { return store.remove(key) }
+			storage.setAttribute(key, store.serialize(val))
+			storage.save(localStorageName)
+			return val
+		})
+		store.get = withIEStorage(function(storage, key, defaultVal) {
+			key = ieKeyFix(key)
+			var val = store.deserialize(storage.getAttribute(key))
+			return (val === undefined ? defaultVal : val)
+		})
+		store.remove = withIEStorage(function(storage, key) {
+			key = ieKeyFix(key)
+			storage.removeAttribute(key)
+			storage.save(localStorageName)
+		})
+		store.clear = withIEStorage(function(storage) {
+			var attributes = storage.XMLDocument.documentElement.attributes
+			storage.load(localStorageName)
+			for (var i=attributes.length-1; i>=0; i--) {
+				storage.removeAttribute(attributes[i].name)
+			}
+			storage.save(localStorageName)
+		})
+		store.getAll = function(storage) {
+			var ret = {}
+			store.forEach(function(key, val) {
+				ret[key] = val
+			})
+			return ret
+		}
+		store.forEach = withIEStorage(function(storage, callback) {
+			var attributes = storage.XMLDocument.documentElement.attributes
+			for (var i=0, attr; attr=attributes[i]; ++i) {
+				callback(attr.name, store.deserialize(storage.getAttribute(attr.name)))
+			}
+		})
+	}
+
+	try {
+		var testKey = '__storejs__'
+		store.set(testKey, testKey)
+		if (store.get(testKey) != testKey) { store.disabled = true }
+		store.remove(testKey)
+	} catch(e) {
+		store.disabled = true
+	}
+	store.enabled = !store.disabled
+	
+	return store
+}());
+
+console.log(storejs.enabled);
+
+var _localStorage = {
+	setItem : function(key, value) {
+		if (storejs.enabled) {
+			storejs.set(key, value);
+		}
+	},
+	getItem : function() {
+		if (storejs.enabled) {
+			return storejs.get(key);
+		}
+	},
+	removeItem : function() {
+		if (storejs.enabled) {
+			storejs.remove(key);
+		}
+	},
+	getAllItems : function() {
+		return storejs.getAll();
 	}
 }
 
@@ -768,9 +940,11 @@ Paho.MQTT = (function (global) {
 		if (!("WebSocket" in global && global["WebSocket"] !== null)) {
 			throw new Error(format(ERROR.UNSUPPORTED, ["WebSocket"]));
 		}
+/*
 		if (!("localStorage" in global && global["localStorage"] !== null)) {
 			throw new Error(format(ERROR.UNSUPPORTED, ["localStorage"]));
 		}
+*/
 		if (!("ArrayBuffer" in global && global["ArrayBuffer"] !== null)) {
 			throw new Error(format(ERROR.UNSUPPORTED, ["ArrayBuffer"]));
 		}
@@ -813,7 +987,7 @@ Paho.MQTT = (function (global) {
 		
 
 		// Load the local state, if any, from the saved version, only restore state relevant to this client.   	
-		for (var key in localStorage)
+		for (var key in _localStorage.getItems)
 			if (   key.indexOf("Sent:"+this._localKey) == 0  		    
 				|| key.indexOf("Received:"+this._localKey) == 0)
 			this.restore(key);
@@ -1065,11 +1239,11 @@ Paho.MQTT = (function (global) {
 			default:
 				throw Error(format(ERROR.INVALID_STORED_DATA, [key, storedMessage]));
 		}
-		storage.set(prefix+this._localKey+wireMessage.messageIdentifier, JSON.stringify(storedMessage));
+		_localStorage.setItem(prefix+this._localKey+wireMessage.messageIdentifier, JSON.stringify(storedMessage));
 	};
 	
 	ClientImpl.prototype.restore = function(key) {    	
-		var value = storage.get(key);
+		var value = _localStorage.getItem(key);
 		var storedMessage = JSON.parse(value);
 		
 		var wireMessage = new WireMessage(storedMessage.type, storedMessage);
@@ -1219,13 +1393,13 @@ Paho.MQTT = (function (global) {
 				if (this.connectOptions.cleanSession) {
 					for (var key in this._sentMessages) {	    		
 						var sentMessage = this._sentMessages[key];
-						localStorage.removeItem("Sent:"+this._localKey+sentMessage.messageIdentifier);
+						_localStorage.removeItem("Sent:"+this._localKey+sentMessage.messageIdentifier);
 					}
 					this._sentMessages = {};
 
 					for (var key in this._receivedMessages) {
 						var receivedMessage = this._receivedMessages[key];
-						localStorage.removeItem("Received:"+this._localKey+receivedMessage.messageIdentifier);
+						_localStorage.removeItem("Received:"+this._localKey+receivedMessage.messageIdentifier);
 					}
 					this._receivedMessages = {};
 				}
@@ -1284,7 +1458,7 @@ Paho.MQTT = (function (global) {
 				 // If this is a re flow of a PUBACK after we have restarted receivedMessage will not exist.
 				if (sentMessage) {
 					delete this._sentMessages[wireMessage.messageIdentifier];
-					localStorage.removeItem("Sent:"+this._localKey+wireMessage.messageIdentifier);
+					_localStorage.removeItem("Sent:"+this._localKey+wireMessage.messageIdentifier);
 					if (this.onMessageDelivered)
 						this.onMessageDelivered(sentMessage.payloadMessage);
 				}
@@ -1303,7 +1477,7 @@ Paho.MQTT = (function (global) {
 								
 			case MESSAGE_TYPE.PUBREL:
 				var receivedMessage = this._receivedMessages[wireMessage.messageIdentifier];
-				localStorage.removeItem("Received:"+this._localKey+wireMessage.messageIdentifier);
+				_localStorage.removeItem("Received:"+this._localKey+wireMessage.messageIdentifier);
 				// If this is a re flow of a PUBREL after we have restarted receivedMessage will not exist.
 				if (receivedMessage) {
 					this._receiveMessage(receivedMessage);
@@ -1317,7 +1491,7 @@ Paho.MQTT = (function (global) {
 			case MESSAGE_TYPE.PUBCOMP: 
 				var sentMessage = this._sentMessages[wireMessage.messageIdentifier];
 				delete this._sentMessages[wireMessage.messageIdentifier];
-				localStorage.removeItem("Sent:"+this._localKey+wireMessage.messageIdentifier);
+				_localStorage.removeItem("Sent:"+this._localKey+wireMessage.messageIdentifier);
 				if (this.onMessageDelivered)
 					this.onMessageDelivered(sentMessage.payloadMessage);
 				break;
@@ -2532,687 +2706,641 @@ e;d++)if(d%4){var g=f.indexOf(b.charAt(d-1))<<2*(d%4),h=f.indexOf(b.charAt(d))>>
 EventEmitter
 Source: https://github.com/benjreinhart/node-event-emitter
  */
-(function(b){function a(b,d){if({}.hasOwnProperty.call(a.cache,b))return a.cache[b];var e=a.resolve(b);if(!e)throw new Error('Failed to resolve module '+b);var c={id:b,require:a,filename:b,exports:{},loaded:!1,parent:d,children:[]};d&&d.children.push(c);var f=b.slice(0,b.lastIndexOf('/')+1);return a.cache[b]=c.exports,e.call(c.exports,c,c.exports,f,b),c.loaded=!0,a.cache[b]=c.exports}a.modules={},a.cache={},a.resolve=function(b){return{}.hasOwnProperty.call(a.modules,b)?a.modules[b]:void 0},a.define=function(b,c){a.modules[b]=c},a.define('/index.js',function(c,d,e,f){function b(){b.init.call(this)}var a={};a.isObject=function a(b){return typeof b==='object'&&b!==null},a.isNumber=function a(b){return typeof b==='number'},a.isUndefined=function a(b){return b===void 0},a.isFunction=function a(b){return typeof b==='function'},c.exports=b,b.EventEmitter=b,b.prototype._events=undefined,b.prototype._maxListeners=undefined,b.defaultMaxListeners=10,b.init=function(){this._events=this._events||{},this._maxListeners=this._maxListeners||undefined},b.prototype.setMaxListeners=function(b){if(!a.isNumber(b)||b<0||isNaN(b))throw TypeError('n must be a positive number');return this._maxListeners=b,this},b.prototype.emit=function(h){var f,c,d,e,b,g;if(this._events||(this._events={}),h==='error'&&!this._events.error)throw f=arguments[1],f instanceof Error?f:Error('Uncaught, unspecified "error" event.');if(c=this._events[h],a.isUndefined(c))return!1;if(a.isFunction(c))switch(arguments.length){case 1:c.call(this);break;case 2:c.call(this,arguments[1]);break;case 3:c.call(this,arguments[1],arguments[2]);break;default:d=arguments.length;e=new Array(d-1);for(b=1;b<d;b++)e[b-1]=arguments[b];c.apply(this,e)}else if(a.isObject(c)){for(d=arguments.length,e=new Array(d-1),b=1;b<d;b++)e[b-1]=arguments[b];for(g=c.slice(),d=g.length,b=0;b<d;b++)g[b].apply(this,e)}return!0},b.prototype.addListener=function(c,d){var e;if(!a.isFunction(d))throw TypeError('listener must be a function');if(this._events||(this._events={}),this._events.newListener&&this.emit('newListener',c,a.isFunction(d.listener)?d.listener:d),this._events[c]?a.isObject(this._events[c])?this._events[c].push(d):this._events[c]=[this._events[c],d]:this._events[c]=d,a.isObject(this._events[c])&&!this._events[c].warned){var e;a.isUndefined(this._maxListeners)?e=b.defaultMaxListeners:e=this._maxListeners,e&&e>0&&this._events[c].length>e&&(this._events[c].warned=!0,a.isFunction(console.error)&&console.error('(node) warning: possible EventEmitter memory leak detected. %d listeners added. Use emitter.setMaxListeners() to increase limit.',this._events[c].length),a.isFunction(console.trace)&&console.trace())}return this},b.prototype.on=b.prototype.addListener,b.prototype.once=function(e,b){function c(){this.removeListener(e,c),d||(d=!0,b.apply(this,arguments))}if(!a.isFunction(b))throw TypeError('listener must be a function');var d=!1;return c.listener=b,this.on(e,c),this},b.prototype.removeListener=function(d,c){var b,f,g,e;if(!a.isFunction(c))throw TypeError('listener must be a function');if(!(this._events&&this._events[d]))return this;if(b=this._events[d],g=b.length,f=-1,b===c||a.isFunction(b.listener)&&b.listener===c)delete this._events[d],this._events.removeListener&&this.emit('removeListener',d,c);else if(a.isObject(b)){for(e=g;e-->0;)if(b[e]===c||b[e].listener&&b[e].listener===c){f=e;break}if(f<0)return this;b.length===1?(b.length=0,delete this._events[d]):b.splice(f,1),this._events.removeListener&&this.emit('removeListener',d,c)}return this},b.prototype.removeAllListeners=function(c){var d,b;if(!this._events)return this;if(!this._events.removeListener)return arguments.length===0?this._events={}:this._events[c]&&delete this._events[c],this;if(arguments.length===0){for(d in this._events){if(d==='removeListener')continue;this.removeAllListeners(d)}return this.removeAllListeners('removeListener'),this._events={},this}if(b=this._events[c],a.isFunction(b))this.removeListener(c,b);else if(Array.isArray(b))while(b.length)this.removeListener(c,b[b.length-1]);return delete this._events[c],this},b.prototype.listeners=function(b){var c;return this._events&&this._events[b]?a.isFunction(this._events[b])?c=[this._events[b]]:c=this._events[b].slice():c=[],c},b.listenerCount=function(b,d){var c;return b._events&&b._events[d]?a.isFunction(b._events[d])?c=1:c=b._events[d].length:c=0,c}}),b.EventEmitter=a('/index.js')}.call(this,this))
-
-/*
-Store.js
-Copyright (c) 2010-2016 Marcus Westin
-Source: https://github.com/marcuswestin/store.js
-*/
-var storejs = (function() {
-	var store = {},
-		win = (typeof window != 'undefined' ? window : global),
-		doc = win.document,
-		localStorageName = 'localStorage',
-		scriptTag = 'script',
-		storage
-
-	store.disabled = false
-	store.version = '1.3.20'
-	store.set = function(key, value) {}
-	store.get = function(key, defaultVal) {}
-	store.has = function(key) { return store.get(key) !== undefined }
-	store.remove = function(key) {}
-	store.clear = function() {}
-	store.transact = function(key, defaultVal, transactionFn) {
-		if (transactionFn == null) {
-			transactionFn = defaultVal
-			defaultVal = null
-		}
-		if (defaultVal == null) {
-			defaultVal = {}
-		}
-		var val = store.get(key, defaultVal)
-		transactionFn(val)
-		store.set(key, val)
-	}
-	store.getAll = function() {}
-	store.forEach = function() {}
-
-	store.serialize = function(value) {
-		return JSON.stringify(value)
-	}
-	store.deserialize = function(value) {
-		if (typeof value != 'string') { return undefined }
-		try { return JSON.parse(value) }
-		catch(e) { return value || undefined }
-	}
-
-	// Functions to encapsulate questionable FireFox 3.6.13 behavior
-	// when about.config::dom.storage.enabled === false
-	// See https://github.com/marcuswestin/store.js/issues#issue/13
-	function isLocalStorageNameSupported() {
-		try { return (localStorageName in win && win[localStorageName]) }
-		catch(err) { return false }
-	}
-
-	if (isLocalStorageNameSupported()) {
-		storage = win[localStorageName]
-		store.set = function(key, val) {
-			if (val === undefined) { return store.remove(key) }
-			storage.setItem(key, store.serialize(val))
-			return val
-		}
-		store.get = function(key, defaultVal) {
-			var val = store.deserialize(storage.getItem(key))
-			return (val === undefined ? defaultVal : val)
-		}
-		store.remove = function(key) { storage.removeItem(key) }
-		store.clear = function() { storage.clear() }
-		store.getAll = function() {
-			var ret = {}
-			store.forEach(function(key, val) {
-				ret[key] = val
-			})
-			return ret
-		}
-		store.forEach = function(callback) {
-			for (var i=0; i<storage.length; i++) {
-				var key = storage.key(i)
-				callback(key, store.get(key))
-			}
-		}
-	} else if (doc && doc.documentElement.addBehavior) {
-		var storageOwner,
-			storageContainer
-		// Since #userData storage applies only to specific paths, we need to
-		// somehow link our data to a specific path.  We choose /favicon.ico
-		// as a pretty safe option, since all browsers already make a request to
-		// this URL anyway and being a 404 will not hurt us here.  We wrap an
-		// iframe pointing to the favicon in an ActiveXObject(htmlfile) object
-		// (see: http://msdn.microsoft.com/en-us/library/aa752574(v=VS.85).aspx)
-		// since the iframe access rules appear to allow direct access and
-		// manipulation of the document element, even for a 404 page.  This
-		// document can be used instead of the current document (which would
-		// have been limited to the current path) to perform #userData storage.
-		try {
-			storageContainer = new ActiveXObject('htmlfile')
-			storageContainer.open()
-			storageContainer.write('<'+scriptTag+'>document.w=window</'+scriptTag+'><iframe src="/favicon.ico"></iframe>')
-			storageContainer.close()
-			storageOwner = storageContainer.w.frames[0].document
-			storage = storageOwner.createElement('div')
-		} catch(e) {
-			// somehow ActiveXObject instantiation failed (perhaps some special
-			// security settings or otherwse), fall back to per-path storage
-			storage = doc.createElement('div')
-			storageOwner = doc.body
-		}
-		var withIEStorage = function(storeFunction) {
-			return function() {
-				var args = Array.prototype.slice.call(arguments, 0)
-				args.unshift(storage)
-				// See http://msdn.microsoft.com/en-us/library/ms531081(v=VS.85).aspx
-				// and http://msdn.microsoft.com/en-us/library/ms531424(v=VS.85).aspx
-				storageOwner.appendChild(storage)
-				storage.addBehavior('#default#userData')
-				storage.load(localStorageName)
-				var result = storeFunction.apply(store, args)
-				storageOwner.removeChild(storage)
-				return result
-			}
-		}
-
-		// In IE7, keys cannot start with a digit or contain certain chars.
-		// See https://github.com/marcuswestin/store.js/issues/40
-		// See https://github.com/marcuswestin/store.js/issues/83
-		var forbiddenCharsRegex = new RegExp("[!\"#$%&'()*+,/\\\\:;<=>?@[\\]^`{|}~]", "g")
-		var ieKeyFix = function(key) {
-			return key.replace(/^d/, '___$&').replace(forbiddenCharsRegex, '___')
-		}
-		store.set = withIEStorage(function(storage, key, val) {
-			key = ieKeyFix(key)
-			if (val === undefined) { return store.remove(key) }
-			storage.setAttribute(key, store.serialize(val))
-			storage.save(localStorageName)
-			return val
-		})
-		store.get = withIEStorage(function(storage, key, defaultVal) {
-			key = ieKeyFix(key)
-			var val = store.deserialize(storage.getAttribute(key))
-			return (val === undefined ? defaultVal : val)
-		})
-		store.remove = withIEStorage(function(storage, key) {
-			key = ieKeyFix(key)
-			storage.removeAttribute(key)
-			storage.save(localStorageName)
-		})
-		store.clear = withIEStorage(function(storage) {
-			var attributes = storage.XMLDocument.documentElement.attributes
-			storage.load(localStorageName)
-			for (var i=attributes.length-1; i>=0; i--) {
-				storage.removeAttribute(attributes[i].name)
-			}
-			storage.save(localStorageName)
-		})
-		store.getAll = function(storage) {
-			var ret = {}
-			store.forEach(function(key, val) {
-				ret[key] = val
-			})
-			return ret
-		}
-		store.forEach = withIEStorage(function(storage, callback) {
-			var attributes = storage.XMLDocument.documentElement.attributes
-			for (var i=0, attr; attr=attributes[i]; ++i) {
-				callback(attr.name, store.deserialize(storage.getAttribute(attr.name)))
-			}
-		})
-	}
-
-	try {
-		var testKey = '__storejs__'
-		store.set(testKey, testKey)
-		if (store.get(testKey) != testKey) { store.disabled = true }
-		store.remove(testKey)
-	} catch(e) {
-		store.disabled = true
-	}
-	store.enabled = !store.disabled
-	
-	return store
-}());
-
+(function(b){function a(b,d){if({}.hasOwnProperty.call(a.cache,b))return a.cache[b];var e=a.resolve(b);if(!e)throw new Error('Failed to resolve module '+b);var c={id:b,require:a,filename:b,exports:{},loaded:!1,parent:d,children:[]};d&&d.children.push(c);var f=b.slice(0,b.lastIndexOf('/')+1);return a.cache[b]=c.exports,e.call(c.exports,c,c.exports,f,b),c.loaded=!0,a.cache[b]=c.exports}a.modules={},a.cache={},a.resolve=function(b){return{}.hasOwnProperty.call(a.modules,b)?a.modules[b]:void 0},a.define=function(b,c){a.modules[b]=c},a.define('/index.js',function(c,d,e,f){function b(){b.init.call(this)}var a={};a.isObject=function a(b){return typeof b==='object'&&b!==null},a.isNumber=function a(b){return typeof b==='number'},a.isUndefined=function a(b){return b===void 0},a.isFunction=function a(b){return typeof b==='function'},c.exports=b,b.EventEmitter=b,b.prototype._events=undefined,b.prototype._maxListeners=undefined,b.defaultMaxListeners=10,b.init=function(){this._events=this._events||{},this._maxListeners=this._maxListeners||undefined},b.prototype.setMaxListeners=function(b){if(!a.isNumber(b)||b<0||isNaN(b))throw TypeError('n must be a positive number');return this._maxListeners=b,this},b.prototype.emit=function(h){var f,c,d,e,b,g;if(this._events||(this._events={}),h==='error'&&!this._events.error&&false)throw f=arguments[1],f instanceof Error?f:Error('Uncaught, unspecified "error" event.');if(c=this._events[h],a.isUndefined(c))return!1;if(a.isFunction(c))switch(arguments.length){case 1:c.call(this);break;case 2:c.call(this,arguments[1]);break;case 3:c.call(this,arguments[1],arguments[2]);break;default:d=arguments.length;e=new Array(d-1);for(b=1;b<d;b++)e[b-1]=arguments[b];c.apply(this,e)}else if(a.isObject(c)){for(d=arguments.length,e=new Array(d-1),b=1;b<d;b++)e[b-1]=arguments[b];for(g=c.slice(),d=g.length,b=0;b<d;b++)g[b].apply(this,e)}return!0},b.prototype.addListener=function(c,d){var e;if(!a.isFunction(d))throw TypeError('listener must be a function');if(this._events||(this._events={}),this._events.newListener&&this.emit('newListener',c,a.isFunction(d.listener)?d.listener:d),this._events[c]?a.isObject(this._events[c])?this._events[c].push(d):this._events[c]=[this._events[c],d]:this._events[c]=d,a.isObject(this._events[c])&&!this._events[c].warned){var e;a.isUndefined(this._maxListeners)?e=b.defaultMaxListeners:e=this._maxListeners,e&&e>0&&this._events[c].length>e&&(this._events[c].warned=!0,a.isFunction(console.error)&&console.error('(node) warning: possible EventEmitter memory leak detected. %d listeners added. Use emitter.setMaxListeners() to increase limit.',this._events[c].length),a.isFunction(console.trace)&&console.trace())}return this},b.prototype.on=b.prototype.addListener,b.prototype.once=function(e,b){function c(){this.removeListener(e,c),d||(d=!0,b.apply(this,arguments))}if(!a.isFunction(b))throw TypeError('listener must be a function');var d=!1;return c.listener=b,this.on(e,c),this},b.prototype.removeListener=function(d,c){var b,f,g,e;if(!a.isFunction(c))throw TypeError('listener must be a function');if(!(this._events&&this._events[d]))return this;if(b=this._events[d],g=b.length,f=-1,b===c||a.isFunction(b.listener)&&b.listener===c)delete this._events[d],this._events.removeListener&&this.emit('removeListener',d,c);else if(a.isObject(b)){for(e=g;e-->0;)if(b[e]===c||b[e].listener&&b[e].listener===c){f=e;break}if(f<0)return this;b.length===1?(b.length=0,delete this._events[d]):b.splice(f,1),this._events.removeListener&&this.emit('removeListener',d,c)}return this},b.prototype.removeAllListeners=function(c){var d,b;if(!this._events)return this;if(!this._events.removeListener)return arguments.length===0?this._events={}:this._events[c]&&delete this._events[c],this;if(arguments.length===0){for(d in this._events){if(d==='removeListener')continue;this.removeAllListeners(d)}return this.removeAllListeners('removeListener'),this._events={},this}if(b=this._events[c],a.isFunction(b))this.removeListener(c,b);else if(Array.isArray(b))while(b.length)this.removeListener(c,b[b.length-1]);return delete this._events[c],this},b.prototype.listeners=function(b){var c;return this._events&&this._events[b]?a.isFunction(this._events[b])?c=[this._events[b]]:c=this._events[b].slice():c=[],c},b.listenerCount=function(b,d){var c;return b._events&&b._events[d]?a.isFunction(b._events[d])?c=1:c=b._events[d].length:c=0,c}}),b.EventEmitter=a('/index.js')}.call(this,this))
 
 /**
  *  Microgear JS library
  *  More info available at : netpie.io
  */
 
-var bucket = {};
-var storage = {
-	get : function(key) {			
-		if (storejs.enabled) return storejs.get(key);
-		else return bucket[key];
-	},
-	set : function(key, val) {
-		if (storejs.enabled) storejs.set(key,val);
-		else bucket[key] = val;
-	}
+if (typeof Microgear === "undefined") {
+	Microgear = {};
 }
 
-function extract(response) {
-	var out = {};
-	var arr = response.split('&');
-	for (var i=0; i<arr.length; i++) {
-		var a = arr[i].split('=');
-		out[a[0]] = a[1];
-	}
-	return out;
-}
+Microgear.create = function(param) {
+    var gkey = param.key || param.gearkey || "";
+	var gsecret = param.secret || param.gearsecret || "";
+    var galias = param.alias || param.gearalias || "";
 
-function validateLocalStorage() {
-	/*
-	if (!storage.enabled) {
-		alert('Warning: HTML5 localstorage is not available on this browser.');
-		return false;
-	}
-	else return true;
-	*/
-	return true;
-}
+	if (!param) return;
+	var scope = param.scope;	
+	var self = null;
 
-function jsonparse(jsontext) {
-	var jsonobj;
-	try {
-		jsonobj = JSON.parse(jsontext);
-	}
-	catch(e) {
-		return null;
-	}
-	return jsonobj;
-}
+	var _microgear = function(gearkey,gearsecret,gearalias) {
+		this.securemode = USETLS;
+		this.gearkey = gearkey;
+		this.gearsecret = gearsecret;
+	    this.gearalias = gearalias?gearalias.substring(0,16):null;
+		this.client = null;
+		this.subscriptions = [];
+		this.messageBuffer = [];
+		this.requesttoken = {};
+		this.accesstoken = {};
+	};
 
-function createCORSRequest(method, url) {
-  var xhr = new XMLHttpRequest();
-  if ("withCredentials" in xhr) {
-
-    // Check if the XMLHttpRequest object has a "withCredentials" property.
-    // "withCredentials" only exists on XMLHTTPRequest2 objects.
-    xhr.open(method, url, true);
-
-  }
-  else if (typeof XDomainRequest != "undefined") {
-    // Otherwise, check if XDomainRequest.
-    // XDomainRequest only exists in IE, and is IE's way of making CORS requests.
-    xhr = new XDomainRequest();
-    xhr.open(method, url);
-  }
-  else {
-    // Otherwise, CORS is not supported by the browser.
-    xhr = null;
-  }
-  return xhr;
-}
-
-var self = null;
-
-_microgear.prototype = new EventEmitter;
-
-_microgear.prototype.createtoken = function(callback) {
-
-	/* consumer key & secret */
-	var oauth = OAuth({
-	    consumer: {
-			public: self.gearkey,
-			secret: self.gearsecret
+	var bucket = {};
+	var storage = {
+		get : function(key) {			
+			if (storejs.enabled) return storejs.get(key);
+			else return bucket[key];
 		},
-	    signature_method: 'HMAC-SHA1'
-	});
-
-	if (validateLocalStorage() && (!self.accesstoken || !self.accesstoken.token)) {
-		var skey = storage.get("microgear.key");
-		if (skey && skey!=self.gearkey) {
-			self.resettoken();
+		set : function(key, val) {
+			if (storejs.enabled) storejs.set(key,val);
+			else bucket[key] = val;
 		}
-		self.accesstoken = jsonparse(storage.get("microgear.accesstoken"));
+	};
+
+	function extract(response) {
+		var out = {};
+		var arr = response.split('&');
+		for (var i=0; i<arr.length; i++) {
+			var a = arr[i].split('=');
+			out[a[0]] = a[1];
+		}
+		return out;
 	}
 
-	if (self.accesstoken && self.accesstoken.token && self.accesstoken.secret && self.accesstoken.endpoint) {
-		if (typeof(callback)=='function') callback(3);
+	function validateLocalStorage() {
+		/*
+		if (!storage.enabled) {
+			alert('Warning: HTML5 localstorage is not available on this browser.');
+			return false;
+		}
+		else return true;
+		*/
+		return true;
 	}
-	else {
-		if (self.securemode) gearauthurl = 'https://'+GEARAPIADDRESS+':'+GEARAPISECUREPORT;
-		else gearauthurl = 'http://'+GEARAPIADDRESS+':'+GEARAPIPORT;
 
-		if (!self.requesttoken && validateLocalStorage()) {
-			var skey = storage.get("microgear.key");
+	function jsonparse(jsontext) {
+		var jsonobj;
+		try {
+			jsonobj = JSON.parse(jsontext);
+		}
+		catch(e) {
+			return null;
+		}
+		return jsonobj;
+	}
+
+	function createCORSRequest(method, url) {
+	  var xhr = new XMLHttpRequest();
+	  if ("withCredentials" in xhr) {
+
+	    // Check if the XMLHttpRequest object has a "withCredentials" property.
+	    // "withCredentials" only exists on XMLHTTPRequest2 objects.
+	    xhr.open(method, url, true);
+
+	  }
+	  else if (typeof XDomainRequest != "undefined") {
+	    // Otherwise, check if XDomainRequest.
+	    // XDomainRequest only exists in IE, and is IE's way of making CORS requests.
+	    xhr = new XDomainRequest();
+	    xhr.open(method, url);
+	  }
+	  else {
+	    // Otherwise, CORS is not supported by the browser.
+	    xhr = null;
+	  }
+	  return xhr;
+	}
+
+	_microgear.prototype = new EventEmitter;
+
+	_microgear.prototype.createtoken = function(callback) {
+
+		/* consumer key & secret */
+		var oauth = OAuth({
+		    consumer: {
+				public: self.gearkey,
+				secret: self.gearsecret
+			},
+		    signature_method: 'HMAC-SHA1'
+		});
+
+		if (validateLocalStorage() && (!self.accesstoken || !self.accesstoken.token)) {
+			var skey = storage.get("microgear."+self.gearkey+".key");
 			if (skey && skey!=self.gearkey) {
 				self.resettoken();
 			}
-			self.requesttoken = jsonparse(storage.get("microgear.requesttoken"));
+			self.accesstoken = jsonparse(storage.get("microgear."+self.gearkey+".accesstoken"));
 		}
-		if (self.requesttoken && self.requesttoken.token && self.requesttoken.secret) {
 
-			var request_data = {
-			    url: gearauthurl+'/api/atoken',
-			    method: 'POST',
-			    data: {
-					oauth_verifier: self.requesttoken.verifier
-			    }
-			};
-			var http = createCORSRequest(request_data.method, request_data.url);
-			if (!http) {
-				throw new Error('CORS not supported');
+		if (self.accesstoken && self.accesstoken.token && self.accesstoken.secret && self.accesstoken.endpoint) {
+			if (typeof(callback)=='function') callback(3);
+		}
+		else {
+			var gearauthurl;
+
+			if (self.securemode) gearauthurl = 'https://'+GEARAUTH+':'+GEARAPISECUREPORT;
+			else gearauthurl = 'http://'+GEARAUTH+':'+GEARAPIPORT;
+
+			if (!self.requesttoken && validateLocalStorage()) {
+				var skey = storage.get("microgear."+self.gearkey+".key");
+				if (skey && skey!=self.gearkey) {
+					self.resettoken();
+				}
+				self.requesttoken = jsonparse(storage.get("microgear."+self.gearkey+".requesttoken"));
 			}
-			var reqtok = {
-			    public: self.requesttoken.token,
-			    secret: self.requesttoken.secret
-			};
+			if (self.requesttoken && self.requesttoken.token && self.requesttoken.secret) {
 
-			http.setRequestHeader("Authorization", oauth.toHeader(oauth.authorize(request_data, reqtok)).Authorization);
-			http.send();
+				var request_data = {
+				    url: gearauthurl+'/api/atoken',
+				    method: 'POST',
+				    data: {
+						oauth_verifier: self.requesttoken.verifier
+				    }
+				};
+				var http = createCORSRequest(request_data.method, request_data.url);
+				if (!http) {
+					throw new Error('CORS not supported');
+				}
+				var reqtok = {
+				    public: self.requesttoken.token,
+				    secret: self.requesttoken.secret
+				};
 
-			http.onreadystatechange = function() {//Call a function when the state changes.
-		    	if(http.readyState == 4) {
-		    		switch (http.status) {
-		    			case 200 : 
-					        	var r = extract(http.responseText);
-					        	self.accesstoken = {};
-								self.accesstoken.token = r.oauth_token;
-					        	self.accesstoken.secret = r.oauth_token_secret;
-					        	self.accesstoken.endpoint = unescape(r.endpoint);
-		    					// generate revokecode
-								var hkey = self.accesstoken.secret+'&'+self.gearsecret;
-							    var revokecode = CryptoJS.HmacSHA1(self.accesstoken.token,hkey).toString(CryptoJS.enc.Base64).replace(/\//g,'_');
-					        	self.accesstoken.revokecode = unescape(revokecode);
+				http.setRequestHeader("Authorization", oauth.toHeader(oauth.authorize(request_data, reqtok)).Authorization);
+				http.send();
 
-					        	if (r.flag != 'S') {
-									if (validateLocalStorage()) {
-										storage.set("microgear.key", self.gearkey);
-										storage.set("microgear.accesstoken", JSON.stringify(self.accesstoken));
+				http.onreadystatechange = function() {//Call a function when the state changes.
+			    	if(http.readyState == 4) {
+			    		switch (http.status) {
+			    			case 200 :
+						        	var r = extract(http.responseText);
+						        	self.accesstoken = {};
+									self.accesstoken.token = r.oauth_token;
+						        	self.accesstoken.secret = r.oauth_token_secret;
+						        	self.accesstoken.endpoint = unescape(r.endpoint);
+			    					// generate revokecode
+									var hkey = self.accesstoken.secret+'&'+self.gearsecret;
+								    var revokecode = CryptoJS.HmacSHA1(self.accesstoken.token,hkey).toString(CryptoJS.enc.Base64).replace(/\//g,'_');
+						        	self.accesstoken.revokecode = unescape(revokecode);
+
+						        	if (r.flag != 'S') {
+										if (validateLocalStorage()) {
+											storage.set("microgear."+self.gearkey+".key", self.gearkey);
+											storage.set("microgear."+self.gearkey+".accesstoken", JSON.stringify(self.accesstoken));
+										}
 									}
-								}
 
-								if (typeof(callback)=='function') callback(2);
-		    					break;
+									if (typeof(callback)=='function') callback(2);
+			    					break;
 
-						case 401:	// not authorized yet
-								alert('Error 401');
-								if (callback) callback(1);
+							case 401:	// not authorized yet
+									self.emit('error',{code:401, message:"Not authorized"});
+									if (callback) callback(1);
+									break;
+							case 500:	// eg. 500 request token not found
+									self.emit('error',{status:500, message:"Request token invalid"});
+									if (typeof(callback)=='function') callback(0);
+			    					break;
+
+			    			default :
+									self.emit('error',{status:503, message:"Cannot obtain a token"});
+									if (typeof(callback)=='function') callback(0);
+			    					break;
+			    		}
+				    }
+				}
+			}
+			else {
+
+	            var verifier;
+	            if (this.gearalias) verifier = this.gearalias;
+	            else verifier = MGREV;
+
+				var request_data = {
+					url : gearauthurl+'/api/rtoken',
+				    method: 'POST',
+				    data: {
+						oauth_callback: 'scope=&appid='+self.appid+'&mgrev='+MGREV+'&verifier='+verifier,
+				    }
+				};
+				var http = createCORSRequest(request_data.method, request_data.url);
+				if (!http) {
+					throw new Error('CORS not supported');
+				}
+				http.setRequestHeader("Authorization", oauth.toHeader(oauth.authorize(request_data)).Authorization);
+				http.send();
+
+				http.onreadystatechange = function() {//Call a function when the state changes.
+			    	if(http.readyState == 4) {
+			    		switch (http.status) {
+			    			case 200 :
+						        	var r = extract(http.responseText);
+						        	self.requesttoken = {};
+						        	self.requesttoken.token = r.oauth_token;
+						        	self.requesttoken.secret = r.oauth_token_secret;
+						        	self.requesttoken.verifier = verifier;
+
+									if (validateLocalStorage()) {
+										storage.set("microgear."+self.gearkey+".requesttoken", JSON.stringify(self.requesttoken));
+									}
+
+									if (typeof(callback)=='function') callback(1);
+			    					break;
+
+			    			default :
+									self.emit('error',{status:503, message:"Cannot obtain a token"});
+									if (typeof(callback)=='function') callback(0);
+			    					break;
+			    		}
+				    }
+				}
+			}
+		}
+	};
+
+	_microgear.prototype.brokerconnect = function(callback) {
+		var hkey = self.accesstoken.secret+'&'+self.gearsecret;
+		var mqttusername = self.gearkey+'%'+Math.floor(Date.now()/1000);
+		//var mqttpassword = crypto.createHmac('sha1', hkey).update(this.accesstoken.token+'%'+mqttuser).digest('base64');
+	    var mqttpassword = CryptoJS.HmacSHA1(self.accesstoken.token+'%'+mqttusername, hkey).toString(CryptoJS.enc.Base64);
+		var b = self.accesstoken.endpoint.substr(6).split(':');
+
+	//	self.client = new Paho.MQTT.Client(b[0], Number(8083), self.accesstoken.token);
+		var wsport;
+		if (self.securemode) wsport = GBWSSPORT;
+		else wsport = GBWSPORT;
+
+		self.client = new Paho.MQTT.Client(b[0], Number(wsport), self.accesstoken.token);
+		self.client.onConnectionLost = _onConnectionLost;
+		self.client.onMessageArrived = _onMessageArrived;
+		self.client.onError = _onError;
+		self.client.connect({userName: mqttusername,password: mqttpassword, useSSL: self.securemode, onSuccess:_onConnect});
+	};
+
+	function initiateconnection(done) {
+		self.lastretryconnection = Date.now();
+		self.createtoken(function(state) {
+			self.mgstate = state;
+			switch (state) {
+				case 0 : 	/* No token issue */
+							if (self.appkey || self.secret)
+								throw new Error('Error: request token is not issued, please check your appkey and appsecret');
+							else
+								throw new Error('Error: request token is not issued, please check your consumerkey and consumersecret');
+							return;
+				case 1 :	/* Request token issued or prepare to request request token again */
+							/*
+							setTimeout(function() {
+								if (toktime < MAXTOKDELAYTIME) toktime *= 2;
+								initiateconnection(done);
+							},toktime);
+							*/
+							initiateconnection(done);
+							return;
+				case 2 :	/* Access token issued */
+							initiateconnection(done);
+							//toktime = 1;
+							return;
+				case 3 :	/* Has access token ready for connecting broker */
+							//toktime = 1;
+							self.brokerconnect(function() {
+								if (done) done();
+							});
+							return;
+			}
+		});
+	}
+
+	function _onConnect() {
+		for(var i=0; i<self.subscriptions.length; i++) {
+			if (self.debugmode) console.log('auto subscribe '+self.subscriptions[i]);
+			self.client.subscribe('/'+self.appid+self.subscriptions[i]);
+		}
+
+		/* subscribe for control messages */
+		self.client.subscribe('/&id/'+self.clientid+'/#');
+
+		if (self.listeners('present')) {
+			self.client.subscribe('/'+self.appid+'/&present');
+		}
+		if (self.listeners('absent')) {
+			self.client.subscribe('/'+self.appid+'/&absent');
+		}
+
+        if (self.gearalias) {
+            self.setalias(self.gearalias);
+        }
+
+		self.emit('connected');
+
+		var timer = setInterval(function() {
+			if (self.messageBuffer.length > 0) {
+			var message = self.messageBuffer.shift();
+			message.destinationName = '/'+self.appid + message.destinationName;
+			self.client.send(message);
+			}
+			else clearInterval(timer);
+		}, 200);
+	}
+
+	function _onError(err) {
+		//console.log(JSON.stringify(err));
+		if (err.code == 4) {
+			self.emit('info','invalid token, requesting a new one');
+			if (validateLocalStorage()) {
+				self.requesttoken = {};
+				self.accesstoken = {};
+				storage.set("microgear."+self.gearkey+".key", "");
+				storage.set("microgear."+self.gearkey+".accesstoken", JSON.stringify({}));
+				storage.set("microgear."+self.gearkey+".requesttoken", JSON.stringify({}));
+			}
+		}
+	}
+
+	function _onMessageArrived(msg) {
+		var topic = msg.destinationName;
+		var message = msg.payloadString;
+		var plen = self.appid.length +1;
+		var rtop = topic.substr(plen,topic.length-plen);
+
+		if (rtop.substr(0,2)=='/&') {
+			var p = (rtop.substr(1,rtop.length-1)+'/').indexOf('/');
+			var ctop = rtop.substr(2,p);
+			switch (ctop) {
+                case 'present' :
+                case 'absent'  :
+                            var pm;
+                            try {
+                                pm = JSON.parse(message.toString());
+                            }
+                            catch(e) {
+                                pm = message.toString();
+                            }
+                        self.emit(ctop, pm);
+                        break;
+                case 'resetendpoint' :
+	                        if (self.accesstoken && self.accesstoken.endpoint) {
+	                            self.accesstoken.endpoint = "";
+								storage.set("microgear."+self.gearkey+".accesstoken", JSON.stringify(self.accesstoken));
+	                            self.emit('info','endpoint reset');
+	                        }
+	                        break;
+			}
+		}
+		else if (topic.substr(0,1)=='@') {
+			switch (topic) {
+				case '@info' : 	self.emit('info',message);
 								break;
-						case 500:	// eg. 500 request token not found
-
-		    			default :
-					        	alert('oauth request error --> '+http.responseText);
-								if (typeof(callback)=='function') callback(0);
-		    					break;
-		    		}
-			    }
+				case '@error' : self.emit('error',message);
+								break;
 			}
 		}
 		else {
+			self.emit('message',topic,message);
+		}
+	}
 
-            var verifier;
-            if (this.gearalias) verifier = this.gearalias;
-            else verifier = MGREV;
+	function _onConnectionLost(responseObject) {
+		self.emit('disconnected');
+	}
 
-			var request_data = {
-				url : gearauthurl+'/api/rtoken',
-			    method: 'POST',
-			    data: {
-					oauth_callback: 'scope=&appid='+self.appid+'&mgrev='+MGREV+'&verifier='+verifier,
-			    }
-			};
-			var http = createCORSRequest(request_data.method, request_data.url);
-			if (!http) {
-				throw new Error('CORS not supported');
-			}
-			http.setRequestHeader("Authorization", oauth.toHeader(oauth.authorize(request_data)).Authorization);
-			http.send();
-
-			http.onreadystatechange = function() {//Call a function when the state changes.
-		    	if(http.readyState == 4) {
-		    		switch (http.status) {
-		    			case 200 :
-					        	var r = extract(http.responseText);
-					        	self.requesttoken = {};
-					        	self.requesttoken.token = r.oauth_token;
-					        	self.requesttoken.secret = r.oauth_token_secret;
-					        	self.requesttoken.verifier = verifier;
-
-								if (validateLocalStorage()) {
-									storage.set("microgear.requesttoken", JSON.stringify(self.requesttoken));
-								}
-
-								if (typeof(callback)=='function') callback(1);
-		    					break;
-
-		    			default :
-					        	alert('oauth request error --> '+http.responseText);
-								if (typeof(callback)=='function') callback(0);
-		    					break;
-		    		}
-			    }
+	// connection monitor loop
+	function monloop() {
+		if (self && self.onlinemode && self.client && !self.client.isConnected()) {
+			if (Date.now() - self.lastretryconnection > RETRYCONNECTIONINTERVAL) {
+				self.lastretryconnection = Date.now();
+				initiateconnection(function() {
+				});
 			}
 		}
 	}
-}
+	setInterval(monloop,MONLOOPINTERVAL);
 
-_microgear.prototype.brokerconnect = function(callback) {
-	var hkey = self.accesstoken.secret+'&'+self.gearsecret;
-	var mqttusername = self.gearkey+'%'+Math.floor(Date.now()/1000);
-	//var mqttpassword = crypto.createHmac('sha1', hkey).update(this.accesstoken.token+'%'+mqttuser).digest('base64');
-    var mqttpassword = CryptoJS.HmacSHA1(self.accesstoken.token+'%'+mqttusername, hkey).toString(CryptoJS.enc.Base64);
-	var b = self.accesstoken.endpoint.substr(6).split(':');
+	_microgear.prototype.connect = function(_appid, done) {
+		this.onlinemode = true;
+		self.appid = _appid;
+		initiateconnection(done);
+	};
 
-//	self.client = new Paho.MQTT.Client(b[0], Number(8083), self.accesstoken.token);
-	var wsport;
-	if (self.securemode) wsport = GBWSSPORT;
-	else wsport = GBWSPORT;
+	_microgear.prototype.disconnect = function() {
+		this.onlinemode = false;
+		self.client.disconnect();
 
-	self.client = new Paho.MQTT.Client(b[0], Number(wsport), self.accesstoken.token);
-	self.client.onConnectionLost = _onConnectionLost;
-	self.client.onMessageArrived = _onMessageArrived;
-	self.client.onError = _onError;
-	self.client.connect({userName: mqttusername,password: mqttpassword, useSSL: self.securemode, onSuccess:_onConnect});
-}
+	};
 
-function initiateconnection(done) {
-	self.lastretryconnection = Date.now();
-	self.createtoken(function(state) {
-		self.mgstate = state;
-		switch (state) {
-			case 0 : 	/* No token issue */
-						if (self.appkey || self.secret)
-							throw new Error('Error: request token is not issued, please check your appkey and appsecret');
-						else
-							throw new Error('Error: request token is not issued, please check your consumerkey and consumersecret');
-						return;
-			case 1 :	/* Request token issued or prepare to request request token again */
-						/*
-						setTimeout(function() {
-							if (toktime < MAXTOKDELAYTIME) toktime *= 2;
-							initiateconnection(done);
-						},toktime);
-						*/
-						initiateconnection(done);
-						return;
-			case 2 :	/* Access token issued */
-						initiateconnection(done);
-						//toktime = 1;
-						return;
-			case 3 :	/* Has access token ready for connecting broker */
-						//toktime = 1;
-						self.brokerconnect(function() {
-							if (done) done();
-						});
-						return;
+	_microgear.prototype.subscribe = function(topic) {
+		if (self.client && self.client.isConnected()) {
+			if (self.subscriptions.indexOf(topic) < 0) {
+				self.client.subscribe('/'+self.appid+topic,{
+					onSuccess : function(res) {
+						if (self.subscriptions.indexOf(topic) < 0) {
+							self.subscriptions.push(topic);
+						}
+					},
+					onFailure : function(res) {
+
+					}
+				});
+
+			}	
 		}
-	});
-}
-
-/*
-//For Testing
-var mqttclientid = 'Jocqkb4c1cpkqeeY';
-var mqttusername = 'qDDwMaHEXfBiXmL%1438184799';
-var mqttpassword = 'Iss/3enIiaOyycyFfYTXEvi4r6w=';
-*/
-
-function _onConnect() {
-	for(var i=0; i<self.subscriptions.length; i++) {
-		if (self.debugmode) console.log('auto subscribe '+self.subscriptions[i]);
-		self.client.subscribe(self.subscriptions[i]);
-	}
-
-	/* subscribe for control messages */
-	self.client.subscribe('/&id/'+this.clientid+'/#');
-
-	if (_microgear.prototype.listeners('present')) {
-		self.client.subscribe('/'+self.appid+'/&present');
-	}
-	if (_microgear.prototype.listeners('absent')) {
-		self.client.subscribe('/'+self.appid+'/&absent');
-	}
-
-	_microgear.prototype.emit('connected');
-}
-
-function _onError(err) {
-	//console.log(JSON.stringify(err));
-	if (err.code == 4) {
-		_microgear.prototype.emit('info','invalid token, requesting a new one');
-		if (validateLocalStorage()) {
-			self.requesttoken = {};
-			self.accesstoken = {};
-			storage.set("microgear.key", "");
-			storage.set("microgear.accesstoken", JSON.stringify({}));
-			storage.set("microgear.requesttoken", JSON.stringify({}));
+		else {
+			if (self.subscriptions.indexOf(topic) < 0) {
+				self.subscriptions.push(topic);
+			}
 		}
-	}
-}
+	};
 
-function _onMessageArrived(msg) {
-	var topic = msg.destinationName;
-	var message = msg.payloadString;
-	var plen = self.appid.length +1;
-	var rtop = topic.substr(plen,topic.length-plen);
+	_microgear.prototype.unsubscribe = function(topic,callback) {
+		if (self.client && self.client.isConnected()) {
+			self.client.unsubscribe('/'+self.appid+topic,{
+				onSuccess : function(res) {
+					if (self.subscriptions.indexOf(topic) < 0) {
+						self.subscriptions.splice(self.subscriptions.indexOf(topic));
+					}
+				},
+				onFailure : function(res) {
 
-	if (rtop.substr(0,2)=='/&') {
-		var p = (rtop.substr(1,rtop.length-1)+'/').indexOf('/');
-		var ctop = rtop.substr(2,p);
-		switch (ctop) {
-			case 'present' :
-					_microgear.prototype.emit('present',{event:'present',gearkey:message.toString()});
-					break;
-			case 'absent' :
-					_microgear.prototype.emit('absent',{event:'abesent',gearkey:message.toString()});
-					break;
-		}
-	}
-	else {
-		_microgear.prototype.emit('message',topic,message);
-	}
-}
-
-function _onConnectionLost(responseObject) {
-	_microgear.prototype.emit('disconnected');
-}
-
-// connection monitor loop
-function monloop() {
-	if (self && self.onlinemode && self.client && !self.client.isConnected()) {
-		if (Date.now() - self.lastretryconnection > RETRYCONNECTIONINTERVAL) {
-			self.lastretryconnection = Date.now();
-			initiateconnection(function() {
+				}
 			});
 		}
-	}
-}
-setInterval(monloop,MONLOOPINTERVAL);
-
-_microgear.prototype.connect = function(_appid, done) {
-	this.onlinemode = true;
-	self.appid = _appid;
-	initiateconnection(done);
-}
-
-_microgear.prototype.disconnect = function() {
-	this.onlinemode = false;
-	self.client.disconnect();
-}
-
-_microgear.prototype.subscribe = function(topic) {
-	self.client.subscribe('/'+self.appid+topic, function(err,granted) {
-		if (granted && granted[0]) {
-			if (self.subscriptions.indexOf('/'+self.appid+topic)) {
-				self.subscriptions.push('/'+self.appid+topic);
+		else {
+			if (self.subscriptions.indexOf(topic) >= 0) {
+				self.subscriptions.splice(self.subscriptions.indexOf(topic));
 			}
 		}
-		if (typeof(callback)=='function') {
-			if (err) callback(0);
-			else {
-				if (granted && granted[0] && granted[0].qos==0||granted[0].qos==1||granted[0].qos==2) {
-					callback(1);
-				}
-				else callback(0);
+	};
+
+	_microgear.prototype.publish = function(_topic,_msg,_retained) {
+		var str_msg = '';
+
+		if (typeof(_msg)=='undefined') return;
+		else if (typeof(_msg)=='object') str_msg = JSON.stringify(_msg);
+		else str_msg = _msg.toString();
+
+		var message = new Paho.MQTT.Message(str_msg);
+		if (_retained) message.retained = true;
+
+		if (self.client && self.client.isConnected()) {
+			message.destinationName = '/'+self.appid+_topic;
+			self.client.send(message);
+		}
+		else {
+			if (self.messageBuffer.length < MESSAGEBUFFERSIZE) {
+				message.destinationName = _topic;
+				self.messageBuffer.push(message);
 			}
 		}
-	});
-}
+	};
 
-_microgear.prototype.unsubscribe = function(topic,callback) {
-	if (self.debugmode) {
-		console.log(self.subscriptions.indexOf('/'+self.appid+topic));
-		console.log(self.subscriptions);
-	}
-
-	self.client.unsubscribe('/'+self.appid+topic, function() {
-		self.subscriptions.splice(self.subscriptions.indexOf('/'+self.appid+topic));
-		if (self.debugmode)
-			console.log(self.subscriptions);
-		if (typeof(callback) == 'function') callback();
-	});
-}
-
-_microgear.prototype.publish = function(_topic,_msg,_retained) {
-	var message = new Paho.MQTT.Message(_msg);
-	message.destinationName = '/'+self.appid+_topic;
-
-	if (_retained) message.retained = true;
-	self.client.send(message);
-}
-
-/**
- * Deprecated	
-*/
-_microgear.prototype.setname = function(gearname) {
-	if (self.gearname) self.unsubscribe('/gearname/'+self.gearname);
-	self.subscribe('/gearname/'+gearname, function() {
-		self.gearname = gearname;
-		if (typeof(callback) == 'function') callback();
-	});
-}
-
-_microgear.prototype.setalias = function (gearalias, callback) {
-    self.publish('/@setalias/'+gearalias, "", {}, function() {
-       self.gearalias = gearalias;
-       if (typeof(callback) == 'function') callback();
-    });
-}
-
-_microgear.prototype.unsetname = function (callback) {
-	if (self.gearname != null) {
-		self.unsubscribe('/gearname/'+self.gearname, function() {
-			self.gearname = null;
+	/**
+	 * Deprecated	
+	*/
+	_microgear.prototype.setname = function(gearname) {
+		if (self.gearname) self.unsubscribe('/gearname/'+self.gearname);
+		self.subscribe('/gearname/'+gearname, function() {
+			self.gearname = gearname;
 			if (typeof(callback) == 'function') callback();
 		});
-	}
-}
+	};
 
-_microgear.prototype.chat = function (gearname, message, callback) {
-	self.publish('/gearname/'+gearname, message, callback);
-}
+	_microgear.prototype.setalias = function (gearalias, callback) {
+	    self.publish('/@setalias/'+gearalias, "", {}, function() {
+	       self.gearalias = gearalias;
+	       if (typeof(callback) == 'function') callback();
+	    });
+	};
 
-_microgear.prototype.gettoken = function() {
-	var tok = {token:self.accesstoken.token, secret:self.accesstoken.secret};
-	console.log(tok);
-	return tok;
-}
-
-_microgear.prototype.resettoken = function (callback) {
-	var atok = jsonparse(storage.get("microgear.accesstoken"));
-	if (atok && atok.token && atok.revokecode) {
-		var xmlHttp = new XMLHttpRequest();
-	    xmlHttp.onreadystatechange = function() { 
-			if(xmlHttp.readyState == 4) {
-		    		switch (xmlHttp.status) {
-		    			case 200 :
-								if (xmlHttp.responseText != 'FAILED') {
-	 								if (validateLocalStorage()) {
-										self.requesttoken = {};
-										self.accesstoken = {};
-										storage.set("microgear.key", "");
-										storage.set("microgear.accesstoken", JSON.stringify({}));
-										storage.set("microgear.requesttoken", JSON.stringify({}));
-									}
-								}
-								if (typeof(callback)=='function') callback();
-								break;
-						default :
-								_microgear.prototype.emit('error','Reset token error : '+xmlHttp.responseText);
-								if (typeof(callback)=='function') callback(xmlHttp.responseText);
-								break;
-					}
-		    }		
+	_microgear.prototype.unsetname = function (callback) {
+		if (self.gearname != null) {
+			self.unsubscribe('/gearname/'+self.gearname, function() {
+				self.gearname = null;
+				if (typeof(callback) == 'function') callback();
+			});
 		}
+	};
 
-		var revokecode = atok.revokecode.replace(/\//g,'_');
-        var apiurl = 'http://'+GEARAPIADDRESS+':'+GEARAPIPORT+'/api/revoke/'+atok.token+'/'+revokecode;
-		xmlHttp.open("GET", apiurl, true); //true for asynchronous 
-    	xmlHttp.send(null);
-	}
-	else {
-		if (typeof(callback)=='function') callback();
-	}
-}
+	_microgear.prototype.writefeed = function (feedid, datajson, apikey) {
+		var cmd = '/@writefeed/'+feedid;
+		if (apikey) cmd += '/'+apikey;
 
-_microgear.prototype.on('newListener', function(event,listener) {
-	switch (event) {
-		case 'present' :
-				if (self.client) {
-					if (self.client.isConnected()) {
-						self.subscribe('/@present');
+		if (typeof(datajson) == 'object') datajson = JSON.stringify(datajson);
+		else datajson = datajson.toString();
+
+	    self.publish(cmd,datajson);
+	};
+
+	_microgear.prototype.chat = function (gearname, message, callback) {
+		self.publish('/gearname/'+gearname, message, callback);
+	};
+
+	_microgear.prototype.gettoken = function() {
+		var tok = {token:self.accesstoken.token, secret:self.accesstoken.secret};
+		console.log(tok);
+		return tok;
+	};
+
+	_microgear.prototype.resettoken = function (callback) {
+		var atok = jsonparse(storage.get("microgear."+self.gearkey+".accesstoken"));
+		if (atok && atok.token && atok.revokecode) {
+			var xmlHttp = new XMLHttpRequest();
+		    xmlHttp.onreadystatechange = function() { 
+				if(xmlHttp.readyState == 4) {
+			    		switch (xmlHttp.status) {
+			    			case 200 :
+									if (xmlHttp.responseText != 'FAILED') {
+		 								if (validateLocalStorage()) {
+											self.requesttoken = {};
+											self.accesstoken = {};
+											storage.set("microgear."+self.gearkey+".key", "");
+											storage.set("microgear."+self.gearkey+".accesstoken", JSON.stringify({}));
+											storage.set("microgear."+self.gearkey+".requesttoken", JSON.stringify({}));
+										}
+									}
+									if (typeof(callback)=='function') callback();
+									break;
+							default :
+									self.emit('error','Reset token error : '+xmlHttp.responseText);
+									if (typeof(callback)=='function') callback(xmlHttp.responseText);
+									break;
+						}
+			    }		
+			};
+
+			var apiurl, gearauthurl;
+			var revokecode = atok.revokecode.replace(/\//g,'_');
+
+			if (self.securemode) gearauthurl = 'https://'+GEARAUTH+':'+GEARAPISECUREPORT;
+			else gearauthurl = 'http://'+GEARAUTH+':'+GEARAPIPORT;
+
+	        apiurl = gearauthurl+'/api/revoke/'+atok.token+'/'+revokecode;
+			xmlHttp.open("GET", apiurl, true); //true for asynchronous 
+	    	xmlHttp.send(null);
+		}
+		else {
+			if (typeof(callback)=='function') callback();
+		}
+	};
+
+	_microgear.prototype.on('newListener', function(event,listener) {
+		switch (event) {
+			case 'present' :
+					if (self.client) {
+						if (self.client.isConnected()) {
+							self.subscribe('/@present');
+						}
 					}
-				}
-				break;
-		case 'absent' :
-				if (self.client) {
-					if (self.client.isConnected()) {
-						self.subscribe('/@absent');
+					break;
+			case 'absent' :
+					if (self.client) {
+						if (self.client.isConnected()) {
+							self.subscribe('/@absent');
+						}
 					}
-				}
-				break;
+					break;
+		}
+	});
+
+	_microgear.prototype.usetls = function(tls) {
+		self.securemode = tls;
+	};
+
+	_microgear.prototype.connected = function() {
+		if (self.client) {
+			return self.client.isConnected();
+		}
+		else return false;
 	}
-});
 
-_microgear.prototype.usetls = function(tls) {
-	self.securemode = tls;
-}
+	_microgear.prototype.setconfig = function(key,value) {
+		switch(key) {
+			case 'GEARAUTH' : 	GEARAUTH = value.toString();
+								break;
+		}
+	}
 
-_microgear.prototype.setName = _microgear.prototype.setname;
-_microgear.prototype.unsetName = _microgear.prototype.unsetname;
-_microgear.prototype.setAlias = _microgear.prototype.setalias;
-_microgear.prototype.getToken = _microgear.prototype.gettoken;
-_microgear.prototype.resetToken = _microgear.prototype.resettoken;
-_microgear.prototype.useTLS = _microgear.prototype.usetls;
+	_microgear.prototype.getconfig = function(key) {
+		switch(key) {
+			case 'GEARAUTH' : 	return GEARAUTH;
+								break;
+		}
+	}
+
+	_microgear.prototype.pushowner = function(msg) {
+		self.publish('/@push/owner', msg);
+	}
+
+	_microgear.prototype.setName = _microgear.prototype.setname;
+	_microgear.prototype.unsetName = _microgear.prototype.unsetname;
+	_microgear.prototype.setAlias = _microgear.prototype.setalias;
+	_microgear.prototype.writeFeed = _microgear.prototype.writefeed;
+	_microgear.prototype.getToken = _microgear.prototype.gettoken;
+	_microgear.prototype.resetToken = _microgear.prototype.resettoken;
+	_microgear.prototype.useTLS = _microgear.prototype.usetls;
+	_microgear.prototype.setConfig = _microgear.prototype.setconfig;
+	_microgear.prototype.getConfig = _microgear.prototype.getconfig;
+	_microgear.prototype.pushOwner = _microgear.prototype.pushowner;
+
+	if (gkey && gsecret) {
+		var mg = new _microgear(gkey,gsecret,galias);
+		mg.scope = param.scope;
+		self = mg;
+		return mg;
+	}
+	else {	
+		return null;
+	}
+};
